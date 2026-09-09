@@ -1,0 +1,86 @@
+# Production compose file for the dookblog container on the Compute Engine VM.
+#
+# This runs as a SECOND container on the same VM as dookwebsite, which owns
+# host ports 80 and 443 and terminates TLS for dook.bigfat.ai. The blog is
+# therefore published on its own host port instead, mirroring how both apps
+# are run locally on separate ports.
+#
+#   dookwebsite  ->  host 80 / 443   (TLS terminated in its own nginx)
+#   dookblog     ->  host 8080       (plain HTTP, this file)
+#
+# The blog's own nginx does not terminate TLS - see the Dockerfile header.
+# Traffic to port 8080 is therefore UNENCRYPTED, and the CMS at / is a login
+# form, so credentials cross the network in the clear. Putting this behind a
+# TLS-terminating proxy (or extending dookwebsite's nginx to serve a blog
+# subdomain) is the fix when that matters; nothing here has to change for it
+# except the published port.
+#
+# Started by the deploy workflow, not by hand:
+#   .github/workflows/deploy.yml
+#
+# IMAGE is substituted by the workflow to the exact tag it just pushed. Pinning
+# a real tag rather than ':latest' is what makes it possible to tell what is
+# running and to roll back to what ran before.
+
+services:
+  app:
+    image: ${IMAGE:-dookblog:prod}
+
+    ports:
+      # Host 8080 -> container 80. Requires a firewall rule allowing tcp:8080
+      # to this VM; only 80 and 443 are open by default.
+      - "8080:80"
+
+    # Real env vars, never baked into the image. Written by the workflow's
+    # "Sync env file" step from the APP_ENV_FILE repository secret.
+    env_file:
+      - /etc/dookblog/app.env
+
+    volumes:
+      # Laravel logs, kept on the host so they survive container replacement.
+      - /var/lib/dookblog/storage-logs:/var/www/html/storage/logs
+
+      # Uploaded images. This one is not optional and not cosmetic.
+      #
+      # PostController and ProfileController write uploads into
+      # public_path('images/...') - i.e. INSIDE the container's filesystem.
+      # Without this mount every deploy would replace the container and take
+      # all uploads since the last build with it, silently, leaving broken
+      # images on exactly the newest posts.
+      #
+      # The mount shadows the ~676 MB of images baked into the image, so the
+      # workflow seeds this directory from the image the first time it
+      # deploys (see the "Seed uploads directory" step) and leaves it alone
+      # afterwards. Must be owned by uid 33 (www-data): php-fpm's master runs
+      # as root but its workers do not, and the workers are what write here.
+      - /var/lib/dookblog/public-images:/var/www/html/public/images
+
+    healthcheck:
+      # Hits the login page, which renders without touching the database, so
+      # a dropped VPN tunnel degrades requests instead of restart-looping a
+      # container that is otherwise fine.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+    restart: always
+
+    logging:
+      driver: gcplogs
+      options:
+        gcp-log-cmd: "true"
+
+    # The VM has 8 GB and dookwebsite's compose already claims up to 6 GB.
+    # 1.5 GB here keeps the pair inside the box with a little room for the
+    # host, and matches this container's much smaller php-fpm pool
+    # (pm.max_children = 5 at 512M each).
+    #
+    # If both containers are ever under real load at once, lower
+    # dookwebsite's limit rather than raising this one - 6 + 1.5 leaves only
+    # 0.5 GB for the OS, the VPN tunnel and Docker itself.
+    deploy:
+      resources:
+        limits:
+          memory: 1500m

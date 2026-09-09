@@ -1,0 +1,209 @@
+# Build the blog image in CI, push it to Artifact Registry, and have the VM
+# pull it. Deliberately the same shape as dookwebsite's workflow, because it
+# targets the SAME VM and the two must not surprise each other.
+#
+# Building here rather than on the VM matters more than usual now: the box
+# already runs dookwebsite, and a ~4.7 GB image build on it would compete
+# with a live site for CPU and disk.
+#
+# Auth is keyless (Workload Identity Federation) - no service-account JSON in
+# the repo, which is public.
+#
+# PREREQUISITES on the GCP side, none of which this workflow can create for
+# itself. The first run fails at "Authenticate" until they exist:
+#
+#   1. The WIF provider's attribute condition must trust THIS repository.
+#      It was originally pinned to aashishbigfat/dooksite_testing alone.
+#   2. github-deployer@ must be impersonable by this repo's principalSet.
+#   3. An Artifact Registry repository named 'dookblog' in asia-south1.
+#   4. A firewall rule allowing tcp:8080 to the VM (only 80/443 are open).
+#
+# Manual trigger to start. Turn on the `push` block once a run has gone green.
+
+name: Deploy blog to GCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      sync_env:
+        description: "Rewrite /etc/dookblog/app.env on the VM from GitHub secrets"
+        type: boolean
+        default: true
+  # push:
+  #   branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: dook-website-506316
+  REGION: asia-south1
+  ZONE: asia-south1-a
+  # The VM is named after the first app deployed to it; the blog is a second
+  # container on that same machine, not a second machine.
+  VM_NAME: dookwebsite
+  AR_REPO: dookblog
+  IMAGE_NAME: app
+  HOST_PORT: 8080
+
+# Separate from dookwebsite's "deploy-gcp" group: the two deploys touch
+# different compose projects and need not queue behind one another. Still one
+# blog deploy at a time, so two runs cannot race on the VM's compose state.
+concurrency:
+  group: deploy-dookblog
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (keyless)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve image tag
+        id: img
+        run: |
+          echo "ref=${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      # target=runtime skips the Dockerfile's `test` stage; the vendor stage
+      # still runs because runtime copies from it.
+      - name: Build image
+        run: docker build --target runtime -t "${{ steps.img.outputs.ref }}" .
+
+      - name: Push image
+        run: docker push "${{ steps.img.outputs.ref }}"
+
+      # Idempotent - safe on the first deploy and on every one after. Docker is
+      # already installed here (dookwebsite put it there), but this must not
+      # assume that.
+      - name: Prepare the VM
+        run: |
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command='
+            set -euo pipefail
+            if ! command -v docker >/dev/null 2>&1; then
+              curl -fsSL https://get.docker.com | sudo sh
+            fi
+            sudo mkdir -p /opt/dookblog \
+                          /etc/dookblog \
+                          /var/lib/dookblog/storage-logs \
+                          /var/lib/dookblog/public-images
+            sudo chown -R 33:33 /var/lib/dookblog/storage-logs \
+                                /var/lib/dookblog/public-images
+          '
+
+      - name: Upload compose file
+        run: |
+          gcloud compute scp docker-compose.prod.yml \
+            "${VM_NAME}:/tmp/dookblog-compose.yml" \
+            --zone="$ZONE" --project="$PROJECT_ID" --quiet
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet \
+            --command='sudo mv /tmp/dookblog-compose.yml /opt/dookblog/docker-compose.prod.yml'
+
+      # Written to a runner-local file and copied, rather than interpolated
+      # into an ssh command string - values contain quotes and $ that do not
+      # survive nested shell quoting intact.
+      #
+      # Owned by uid 33 (www-data) because php-fpm's WORKERS read it, not its
+      # root master process.
+      - name: Sync env file
+        if: ${{ inputs.sync_env }}
+        env:
+          APP_ENV_FILE: ${{ secrets.APP_ENV_FILE }}
+        run: |
+          umask 077
+          printf '%s' "$APP_ENV_FILE" > app.env
+          gcloud compute scp app.env "${VM_NAME}:/tmp/dookblog-app.env" \
+            --zone="$ZONE" --project="$PROJECT_ID" --quiet
+          rm -f app.env
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command='
+            set -euo pipefail
+            sudo install -o 33 -g 33 -m 400 /tmp/dookblog-app.env /etc/dookblog/app.env
+            rm -f /tmp/dookblog-app.env
+          '
+
+      # Log docker in AS ROOT using the deploy account's own short-lived token.
+      # compose runs under sudo, so docker reads /root/.docker/config.json -
+      # NOT the ssh user's ~/.docker where `gcloud auth configure-docker`
+      # writes. That exact mismatch produced "Unauthenticated request" on
+      # dookwebsite's first deploy even though the image had pushed fine. It
+      # also means the VM needs no registry permissions of its own.
+      - name: Pull image on the VM
+        run: |
+          TOKEN="$(gcloud auth print-access-token)"
+          echo "::add-mask::$TOKEN"
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command="
+            set -euo pipefail
+            echo '$TOKEN' | sudo docker login -u oauth2accesstoken --password-stdin https://${REGION}-docker.pkg.dev
+            sudo docker pull '${{ steps.img.outputs.ref }}'
+          "
+
+      # The compose file bind-mounts /var/lib/dookblog/public-images over
+      # public/images, which SHADOWS the ~676 MB of images baked into the
+      # image. On a fresh host that directory is empty, so every historical
+      # post would lose its pictures.
+      #
+      # Copy them out of the image once, before the container ever starts with
+      # the mount in place. Guarded on the directory being empty, so later
+      # deploys never touch uploads made through the CMS in the meantime -
+      # those live only here, and overwriting them would be data loss.
+      - name: Seed uploads directory (first deploy only)
+        run: |
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command="
+            set -euo pipefail
+            if [ -z \"\$(sudo ls -A /var/lib/dookblog/public-images)\" ]; then
+              echo 'seeding public/images from the image (first deploy)'
+              cid=\$(sudo docker create '${{ steps.img.outputs.ref }}')
+              sudo docker cp \"\$cid\":/var/www/html/public/images/. /var/lib/dookblog/public-images/
+              sudo docker rm -f \"\$cid\" >/dev/null
+              sudo chown -R 33:33 /var/lib/dookblog/public-images
+              echo \"seeded \$(sudo find /var/lib/dookblog/public-images -type f | wc -l) files\"
+            else
+              echo 'uploads directory already populated - left untouched'
+            fi
+          "
+
+      - name: Deploy
+        run: |
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command="
+            set -euo pipefail
+            cd /opt/dookblog
+            sudo env IMAGE='${{ steps.img.outputs.ref }}' docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            sudo docker image prune -f
+            sudo docker logout https://${REGION}-docker.pkg.dev
+          "
+
+      # Checked from inside the VM so this reports on the container rather
+      # than on DNS or the firewall, which fail for unrelated reasons.
+      - name: Health check
+        run: |
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command='
+            for i in $(seq 1 20); do
+              code=$(curl -fsS -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:'"$HOST_PORT"'/ || true)
+              if [ "$code" = "200" ]; then echo "healthy (HTTP $code)"; exit 0; fi
+              echo "attempt $i: HTTP ${code:-none}"; sleep 6
+            done
+            echo "did not become healthy"
+            sudo docker compose -f /opt/dookblog/docker-compose.prod.yml logs --tail=60
+            exit 1
+          '
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Blog deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "- image: \`${{ steps.img.outputs.ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- vm: \`$VM_NAME\` (\`$ZONE\`), port \`$HOST_PORT\`" >> "$GITHUB_STEP_SUMMARY"
