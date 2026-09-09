@@ -1,0 +1,70 @@
+# ------------------------------------------------------------------
+# Build-context excludes for the dookblog image.
+#
+# This file is load-bearing, not housekeeping. `COPY . .` in the
+# Dockerfile would otherwise bake .env - which holds the Cloud SQL
+# ROOT password - into an image layer that gets pushed to Artifact
+# Registry. Deleting the file in a later RUN would not help: the
+# earlier layer still contains it and stays readable to anyone who
+# can pull the image. The only real fix is to keep it out of the
+# build context in the first place.
+#
+# Nothing here changes application behavior.
+# ------------------------------------------------------------------
+
+.git
+.gitattributes
+.gitignore
+
+# Secrets. Real values arrive at runtime through the container's
+# env_file, never through an image layer.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+
+# Reinstalled inside the image by the `vendor` stage. The host copy is
+# built against the host's PHP version and may include dev packages.
+vendor
+node_modules
+
+# Frontend build artifacts that are NOT committed. Note that
+# public/css/app.css, public/js/app.js and public/assets/ ARE committed
+# and ARE needed - the image deliberately does not run Laravel Mix.
+/public/hot
+/public/storage
+
+# Runtime state. Belongs to whatever machine produced it, never to the
+# image; a stale compiled view or session from the dev box would ship
+# to production and be served.
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/framework/testing/*
+/storage/logs/*
+/storage/app/*
+/bootstrap/cache/*.php
+.phpunit.result.cache
+
+# Not used at runtime
+/tests
+phpunit.xml
+README.md
+/explainers
+webpack.mix.js
+package.json
+server.php
+
+# Docker's own files don't need to be inside their own build context
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Editors / OS junk
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.zip

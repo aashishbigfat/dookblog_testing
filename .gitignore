@@ -1,0 +1,76 @@
+# Laravel 8 standard ignores, plus this project's specifics.
+#
+# NOTE: .gitignore only affects UNTRACKED files. Anything git already tracks
+# stays tracked until it is explicitly removed with `git rm --cached`, and it
+# stays in history until history is rewritten. Adding a path here is therefore
+# only half of removing something from the repo.
+
+# --- Dependencies (reinstalled from the lock files, never committed) ---
+/vendor
+/node_modules
+
+# --- Secrets ------------------------------------------------------------
+# .env holds the Cloud SQL credentials, APP_KEY and mail settings. It must
+# never be committed. Real values belong in the deployment's own secret
+# store, and reach the container as environment variables at runtime.
+.env
+.env.*
+!.env.example
+.env.backup
+.env.production
+*.pem
+*.key
+*.p12
+service-account*.json
+gcs-key*.json
+
+# --- Runtime state ------------------------------------------------------
+# Written by the running app. Belongs to whichever machine produced it, and
+# committing it means one environment's sessions, caches and logs ship to
+# every other environment.
+/storage/*.key
+/storage/app/*
+!/storage/app/.gitignore
+!/storage/app/public/.gitignore
+/storage/framework/cache/*
+!/storage/framework/cache/.gitignore
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+/storage/framework/testing/*
+!/storage/framework/testing/.gitignore
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+/storage/logs/*
+!/storage/logs/.gitignore
+/bootstrap/cache/*
+!/bootstrap/cache/.gitignore
+
+# --- Frontend build artifacts ------------------------------------------
+# public/css/app.css, public/js/app.js and public/assets/ ARE committed on
+# purpose - the views reference them via asset() and nothing rebuilds them
+# at deploy time (the Dockerfile deliberately runs no Node stage). Only the
+# non-reproducible dev-server artifacts are ignored here.
+/public/hot
+/public/storage
+/public/mix-manifest.json
+
+# --- Test / tooling artifacts -------------------------------------------
+.phpunit.result.cache
+/.phpunit.cache
+Homestead.json
+Homestead.yaml
+npm-debug.log
+yarn-error.log
+
+# --- Editors / OS -------------------------------------------------------
+/.idea
+/.vscode
+/.fleet
+.DS_Store
+Thumbs.db
+*.zip
+
+# --- Docker -------------------------------------------------------------
+# The Dockerfile and .dockerignore ARE committed. Only local overrides and
+# runtime compose state are ignored.
+docker-compose.override.yml
