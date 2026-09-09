@@ -16,7 +16,10 @@
 #      It was originally pinned to aashishbigfat/dooksite_testing alone.
 #   2. github-deployer@ must be impersonable by this repo's principalSet.
 #   3. An Artifact Registry repository named 'dookblog' in asia-south1.
-#   4. A firewall rule allowing tcp:8080 to the VM (only 80/443 are open).
+#
+# No firewall change is needed: the container publishes to the VM's loopback
+# only, because the CMS login is unencrypted and has no business facing the
+# internet. Reach it over an SSH tunnel - see docker-compose.prod.yml.
 #
 # Manual trigger to start. Turn on the `push` block once a run has gone green.
 
@@ -45,7 +48,9 @@ env:
   VM_NAME: dookwebsite
   AR_REPO: dookblog
   IMAGE_NAME: app
-  HOST_PORT: 8080
+  # The port dookwebsite's BlogController already expects, and the one the
+  # pair use locally. Published on the VM's loopback only.
+  HOST_PORT: 8001
 
 # Separate from dookwebsite's "deploy-gcp" group: the two deploys touch
 # different compose projects and need not queue behind one another. Still one

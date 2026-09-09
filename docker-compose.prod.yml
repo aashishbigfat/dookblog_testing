@@ -1,19 +1,50 @@
 # Production compose file for the dookblog container on the Compute Engine VM.
 #
+# WHAT THIS SERVICE IS. The blog has no public homepage of its own. Readers
+# reach blog content at dook.bigfat.ai/blog/, which is a route owned by
+# DOOKWEBSITE - it renders its own Blade views and fetches the data from this
+# app's /api/* endpoints server-side. This container therefore serves two
+# audiences, neither of which is a public reader:
+#
+#   1. dookwebsite, calling /api/all-posts, /api/post_details, /api/blog-search
+#      and /api/category/posts server-side.
+#   2. editors, using the CMS at / (a login form, not a homepage).
+#
 # This runs as a SECOND container on the same VM as dookwebsite, which owns
-# host ports 80 and 443 and terminates TLS for dook.bigfat.ai. The blog is
-# therefore published on its own host port instead, mirroring how both apps
-# are run locally on separate ports.
+# host ports 80 and 443 and terminates TLS for dook.bigfat.ai. The blog gets
+# its own host port instead, mirroring how the two are run locally.
 #
 #   dookwebsite  ->  host 80 / 443   (TLS terminated in its own nginx)
-#   dookblog     ->  host 8080       (plain HTTP, this file)
+#   dookblog     ->  host 8001       (plain HTTP, this file)
 #
-# The blog's own nginx does not terminate TLS - see the Dockerfile header.
-# Traffic to port 8080 is therefore UNENCRYPTED, and the CMS at / is a login
-# form, so credentials cross the network in the clear. Putting this behind a
-# TLS-terminating proxy (or extending dookwebsite's nginx to serve a blog
-# subdomain) is the fix when that matters; nothing here has to change for it
-# except the published port.
+# 8001 rather than any free port: that is the port dookwebsite's
+# BlogController already expects, and the port the pair use locally.
+#
+# NOT YET IN DOOKWEBSITE'S DATA PATH, and this file cannot put it there.
+# BlogController hardcodes http://127.0.0.1:8001/api/... - inside its own
+# container that loopback address reaches dookwebsite itself, not this
+# service. Sharing a network namespace would fix the API call and still leave
+# every image broken, because ApiBlogController builds absolute image URLs
+# from the address the API was called on:
+#
+#     $value->image = url('') . '/images/posts/' . $value->image;
+#
+# so a request arriving at 127.0.0.1:8001 yields image URLs pointing at
+# 127.0.0.1:8001 - which the READER'S BROWSER then tries to load, against
+# their own machine. dookwebsite passes those URLs through to its views
+# unmodified.
+#
+# Wiring the two together therefore needs a change in dookwebsite (ideally
+# making that base URL an env var instead of a literal) plus a publicly
+# reachable HTTPS origin for the images. Both are out of scope here.
+#
+# Traffic to port 8001 is UNENCRYPTED and the CMS login sits at /, so do not
+# open this port to the internet without TLS in front of it. Reach it over an
+# SSH tunnel instead:
+#
+#   gcloud compute ssh dookwebsite --zone=asia-south1-a \
+#     --project=dook-website-506316 -- -L 8001:localhost:8001
+#   then browse http://127.0.0.1:8001/
 #
 # Started by the deploy workflow, not by hand:
 #   .github/workflows/deploy.yml
@@ -27,9 +58,12 @@ services:
     image: ${IMAGE:-dookblog:prod}
 
     ports:
-      # Host 8080 -> container 80. Requires a firewall rule allowing tcp:8080
-      # to this VM; only 80 and 443 are open by default.
-      - "8080:80"
+      # Bound to the VM's loopback only, NOT 0.0.0.0. The CMS login is
+      # unencrypted, so it must not be published to the internet; the VM's
+      # firewall allows only 80/443 inbound anyway, and this makes that
+      # explicit rather than incidental. Reach it through the SSH tunnel in
+      # the header comment. Change to "8001:80" once TLS fronts it.
+      - "127.0.0.1:8001:80"
 
     # Real env vars, never baked into the image. Written by the workflow's
     # "Sync env file" step from the APP_ENV_FILE repository secret.
