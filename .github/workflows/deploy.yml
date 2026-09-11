@@ -211,9 +211,27 @@ jobs:
             # 1. The blog itself booted: nginx + php-fpm + a full Laravel boot.
             #    Deliberately hits / (the CMS login), which touches no database,
             #    so a dropped VPN tunnel does not look like a failed deploy.
+            #
+            #    A 200 alone is NOT enough, and checking only the status code
+            #    is how the first deploy passed this step while completely
+            #    broken. Sharing a network namespace shares the port space, so
+            #    if this container's php-fpm fails to bind, nginx happily
+            #    forwards to DOOKWEBSITE'S php-fpm, which serves dookwebsite's
+            #    own index.php - a perfectly healthy-looking 200 from the wrong
+            #    application. So assert the body is actually the blog's.
             for i in \$(seq 1 20); do
-              code=\$(sudo docker exec $BLOG_CONTAINER curl -fsS -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:$BLOG_PORT/ 2>/dev/null || true)
-              if [ \"\$code\" = '200' ]; then echo \"1/3 blog is up (HTTP \$code)\"; break; fi
+              body=\$(sudo docker exec $BLOG_CONTAINER curl -fsS --max-time 10 http://127.0.0.1:$BLOG_PORT/ 2>/dev/null || true)
+              if printf '%s' \"\$body\" | grep -qi '<title>Blog'; then
+                echo '1/3 blog is up, and it is the BLOG answering (not dookwebsite)'
+                break
+              fi
+              if [ -n \"\$body\" ] && [ \$i -ge 3 ]; then
+                echo '1/3 FAILED: something answered on the blog port, but it is not the blog.'
+                echo '    Almost certainly this container php-fpm failed to bind and nginx is'
+                echo '    forwarding to dookwebsite php-fpm. Check for \"Address already in use\".'
+                sudo docker logs $BLOG_CONTAINER 2>&1 | grep -iE 'address already in use|FPM initialization failed|FATAL' | tail -5
+                exit 1
+              fi
               if [ \$i -eq 20 ]; then
                 echo '1/3 FAILED: blog never became healthy'
                 sudo docker compose -f /opt/dookblog/docker-compose.prod.yml logs --tail=60

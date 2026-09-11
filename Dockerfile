@@ -159,7 +159,21 @@ COPY <<'FPMPOOL' /usr/local/etc/php-fpm.d/zz-www.conf
 [www]
 user = www-data
 group = www-data
-listen = 127.0.0.1:9000
+
+; 9001, NOT the conventional 9000.
+;
+; This container shares dookwebsite's network namespace, which shares the
+; whole port space - not just port 80. dookwebsite's php-fpm already holds
+; 127.0.0.1:9000, so binding it here fails with "Address already in use" and
+; supervisor gives up after three retries.
+;
+; The failure mode is genuinely nasty rather than obvious: nginx still starts,
+; and its fastcgi_pass to 9000 then reaches DOOKWEBSITE'S php-fpm, which
+; happily executes ITS OWN /var/www/html/public/index.php - the two images use
+; the same path. Every blog request is then served by the wrong application,
+; which returns plausible-looking 200s and 302s instead of an error. Hit this
+; exact bug on the first deploy.
+listen = 127.0.0.1:9001
 
 pm = ondemand
 pm.max_children = 5
@@ -217,10 +231,26 @@ COPY <<'NGINXCONF' /etc/nginx/sites-available/default
 # <img src="{{$posts->image}}">, so without this the reader's BROWSER would
 # try to load every post image from its own machine at 127.0.0.1:8001.
 #
-# These maps make the API - and only the API - report the public blog origin,
-# which already serves exactly these files over HTTPS from the same database:
+# These maps make the API - and only the API - report the site's own public
+# origin, so blog images are served from the same domain as the page that
+# embeds them:
 #
-#     https://blog.dookinternational.com/images/posts/<file>  ->  200 image/jpeg
+#     https://dook.bigfat.ai/images/posts/<file>
+#
+# That path is not in dookwebsite's docroot; dookwebsite's nginx proxies
+# ^~ /images/posts/ to 127.0.0.1:8001, which reaches THIS container because
+# the two share a network namespace. Both halves must ship together - point
+# this at dook.bigfat.ai before that proxy exists and every featured image
+# 404s.
+#
+# This deliberately does NOT use the legacy blog host. It would work (that
+# host serves the same files from the same database), but it would leave this
+# deployment quietly depending on the old production server for its images.
+#
+# Images inside post BODIES are a separate matter and are not fixed by this:
+# summernoteImage() writes absolute URLs into the stored post HTML at upload
+# time, so they point at whichever host the CMS was on. Redirecting those
+# means rewriting content in the database.
 #
 # HTTPS matters as much as the host: the page is served over https, so http://
 # image URLs would be blocked as mixed content even if the host were right.
@@ -233,7 +263,7 @@ COPY <<'NGINXCONF' /etc/nginx/sites-available/default
 # instead of deriving it from the request. This changes no PHP.
 map $request_uri $blog_public_host {
     default   $http_host;
-    ~^/api/   blog.dookinternational.com;
+    ~^/api/   dook.bigfat.ai;
 }
 map $request_uri $blog_public_https {
     default   "";
@@ -304,7 +334,10 @@ server {
     }
 
     location ~ \.php$ {
-        fastcgi_pass 127.0.0.1:9000;
+        # 9001 - this container's own php-fpm. 9000 in this shared network
+        # namespace is dookwebsite's php-fpm, which would execute dookwebsite's
+        # index.php against blog URLs. See the pool config for the full story.
+        fastcgi_pass 127.0.0.1:9001;
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
