@@ -11,40 +11,42 @@
 #   2. editors, using the CMS at / (a login form, not a homepage).
 #
 # This runs as a SECOND container on the same VM as dookwebsite, which owns
-# host ports 80 and 443 and terminates TLS for dook.bigfat.ai. The blog gets
-# its own host port instead, mirroring how the two are run locally.
+# host ports 80 and 443 and terminates TLS for dook.bigfat.ai.
 #
-#   dookwebsite  ->  host 80 / 443   (TLS terminated in its own nginx)
-#   dookblog     ->  host 8001       (plain HTTP, this file)
+#   dookwebsite  ->  host 80 / 443, public   (TLS terminated in its own nginx)
+#   dookblog     ->  port 8001 INSIDE dookwebsite's network namespace,
+#                    published nowhere and unreachable from outside the VM
 #
 # 8001 rather than any free port: that is the port dookwebsite's
 # BlogController already expects, and the port the pair use locally.
 #
-# NOT YET IN DOOKWEBSITE'S DATA PATH, and this file cannot put it there.
-# BlogController hardcodes http://127.0.0.1:8001/api/... - inside its own
-# container that loopback address reaches dookwebsite itself, not this
-# service. Sharing a network namespace would fix the API call and still leave
-# every image broken, because ApiBlogController builds absolute image URLs
-# from the address the API was called on:
+# Publishing nothing is a security property, not an oversight. The CMS login
+# form sits at / and is served over plain HTTP; keeping it inside another
+# container's namespace means it is reachable only by dookwebsite's own
+# server-side calls, never by the internet.
 #
-#     $value->image = url('') . '/images/posts/' . $value->image;
+# HOW /blog/ IS MADE TO WORK, without changing a line of dookwebsite.
 #
-# so a request arriving at 127.0.0.1:8001 yields image URLs pointing at
-# 127.0.0.1:8001 - which the READER'S BROWSER then tries to load, against
-# their own machine. dookwebsite passes those URLs through to its views
-# unmodified.
+# Two separate problems had to be solved, and each has its own mechanism:
 #
-# Wiring the two together therefore needs a change in dookwebsite (ideally
-# making that base URL an env var instead of a literal) plus a publicly
-# reachable HTTPS origin for the images. Both are out of scope here.
+#   1. Reaching the API. BlogController hardcodes http://127.0.0.1:8001/api/...
+#      Inside its own container that loopback address is dookwebsite itself,
+#      where nothing listens on 8001 - hence the current
+#      {"error":"Failed to fetch blog posts"}. Solved by network_mode below:
+#      this container shares dookwebsite's network namespace, so the two sit
+#      on one loopback exactly as they do on a developer machine.
 #
-# Traffic to port 8001 is UNENCRYPTED and the CMS login sits at /, so do not
-# open this port to the internet without TLS in front of it. Reach it over an
-# SSH tunnel instead:
+#   2. Loading the images. ApiBlogController builds absolute image URLs from
+#      the address the API was called on, and dookwebsite drops them straight
+#      into <img src="...">. Reaching the API over loopback would therefore
+#      hand every reader an image URL pointing at their OWN machine. Solved in
+#      the Dockerfile's nginx config, which reports the public blog origin for
+#      /api/ requests only - that host already serves these same files over
+#      HTTPS from this same database.
 #
-#   gcloud compute ssh dookwebsite --zone=asia-south1-a \
-#     --project=dook-website-506316 -- -L 8001:localhost:8001
-#   then browse http://127.0.0.1:8001/
+# Neither mechanism is the clean long-term answer. That is to make the base
+# URL a config value in both apps rather than a literal in one and a request
+# artifact in the other. These two work without touching dookwebsite.
 #
 # Started by the deploy workflow, not by hand:
 #   .github/workflows/deploy.yml
@@ -57,13 +59,32 @@ services:
   app:
     image: ${IMAGE:-dookblog:prod}
 
-    ports:
-      # Bound to the VM's loopback only, NOT 0.0.0.0. The CMS login is
-      # unencrypted, so it must not be published to the internet; the VM's
-      # firewall allows only 80/443 inbound anyway, and this makes that
-      # explicit rather than incidental. Reach it through the SSH tunnel in
-      # the header comment. Change to "8001:80" once TLS fronts it.
-      - "127.0.0.1:8001:80"
+    # Share dookwebsite's network namespace instead of getting one of our own.
+    #
+    # This is what makes dookwebsite's hardcoded http://127.0.0.1:8001/api/...
+    # resolve to this container. Docker's default bridge gives each container
+    # its own loopback, so that address would otherwise mean "dookwebsite
+    # itself", where nothing listens on 8001 - which is exactly why /blog/
+    # returns {"error":"Failed to fetch blog posts"} today. Sharing the
+    # namespace reproduces the local setup, where both apps sit on one host's
+    # loopback on ports 8000 and 8001.
+    #
+    # Consequences, all deliberate:
+    #   - No `ports:` is possible here; Docker rejects port publishing when a
+    #     network namespace is shared. The blog is reachable only from inside
+    #     that namespace, which is precisely the access dookwebsite needs and
+    #     no more. Editors keep using the existing CMS at
+    #     blog.dookinternational.com.
+    #   - This container's lifecycle is now coupled to dookwebsite's. When
+    #     dookwebsite is redeployed its container is REPLACED, and this one's
+    #     namespace disappears with it; Docker then fails to start this
+    #     container until the target exists again. `restart: always` below
+    #     turns that into self-healing retries rather than an outage needing
+    #     hands - but after a dookwebsite deploy, expect this to take a moment
+    #     to come back, and redeploy it if it does not.
+    #   - The name is dookwebsite's compose-generated container name. If that
+    #     project is ever renamed, this line must change with it.
+    network_mode: "container:dookwebsite-app-1"
 
     # Real env vars, never baked into the image. Written by the workflow's
     # "Sync env file" step from the APP_ENV_FILE repository secret.

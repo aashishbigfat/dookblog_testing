@@ -48,9 +48,15 @@ env:
   VM_NAME: dookwebsite
   AR_REPO: dookblog
   IMAGE_NAME: app
-  # The port dookwebsite's BlogController already expects, and the one the
-  # pair use locally. Published on the VM's loopback only.
-  HOST_PORT: 8001
+  # The port dookwebsite's BlogController already expects, and the one the pair
+  # use locally. NOT published to the VM host: the container shares
+  # dookwebsite's network namespace, so this port exists only inside that
+  # namespace and is reached via `docker exec`, never from the host.
+  BLOG_PORT: 8001
+  # Compose derives this from the directory holding the compose file
+  # (/opt/dookblog) plus the service name (app).
+  BLOG_CONTAINER: dookblog-app-1
+  WEB_CONTAINER: dookwebsite-app-1
 
 # Separate from dookwebsite's "deploy-gcp" group: the two deploys touch
 # different compose projects and need not queue behind one another. Still one
@@ -191,24 +197,61 @@ jobs:
             sudo docker logout https://${REGION}-docker.pkg.dev
           "
 
-      # Checked from inside the VM so this reports on the container rather
-      # than on DNS or the firewall, which fail for unrelated reasons.
+      # Three checks, in order, because each isolates a different failure and
+      # the last two are the ones that actually matter to a reader.
+      #
+      # The port is NOT reachable from the VM host - it lives inside
+      # dookwebsite's network namespace - so every check runs via `docker exec`
+      # rather than curling the host.
       - name: Health check
         run: |
-          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command='
-            for i in $(seq 1 20); do
-              code=$(curl -fsS -o /dev/null -w "%{http_code}" --max-time 10 http://127.0.0.1:'"$HOST_PORT"'/ || true)
-              if [ "$code" = "200" ]; then echo "healthy (HTTP $code)"; exit 0; fi
-              echo "attempt $i: HTTP ${code:-none}"; sleep 6
+          gcloud compute ssh "$VM_NAME" --zone="$ZONE" --project="$PROJECT_ID" --quiet --command="
+            set -u
+
+            # 1. The blog itself booted: nginx + php-fpm + a full Laravel boot.
+            #    Deliberately hits / (the CMS login), which touches no database,
+            #    so a dropped VPN tunnel does not look like a failed deploy.
+            for i in \$(seq 1 20); do
+              code=\$(sudo docker exec $BLOG_CONTAINER curl -fsS -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:$BLOG_PORT/ 2>/dev/null || true)
+              if [ \"\$code\" = '200' ]; then echo \"1/3 blog is up (HTTP \$code)\"; break; fi
+              if [ \$i -eq 20 ]; then
+                echo '1/3 FAILED: blog never became healthy'
+                sudo docker compose -f /opt/dookblog/docker-compose.prod.yml logs --tail=60
+                exit 1
+              fi
+              sleep 6
             done
-            echo "did not become healthy"
-            sudo docker compose -f /opt/dookblog/docker-compose.prod.yml logs --tail=60
-            exit 1
-          '
+
+            # 2. THE POINT OF network_mode: dookwebsite can reach the API over
+            #    its own loopback. If this fails, /blog/ still returns
+            #    {\"error\":\"Failed to fetch blog posts\"} and nothing has changed.
+            api=\$(sudo docker exec $WEB_CONTAINER curl -fsS -o /dev/null -w '%{http_code}' --max-time 20 http://127.0.0.1:$BLOG_PORT/api/all-posts 2>/dev/null || true)
+            if [ \"\$api\" = '200' ]; then
+              echo \"2/3 dookwebsite reaches the API (HTTP \$api)\"
+            else
+              echo \"2/3 FAILED: dookwebsite got HTTP \${api:-none} from the API\"
+              echo '    (HTTP 500 here usually means the VPN tunnel is down, not that the wiring is wrong)'
+              exit 1
+            fi
+
+            # 3. Image URLs point at the PUBLIC origin, not at loopback. Skipping
+            #    this check is how you ship a page where every image is broken
+            #    and mistake it for a styling problem.
+            host=\$(sudo docker exec $WEB_CONTAINER curl -fsS --max-time 20 http://127.0.0.1:$BLOG_PORT/api/all-posts 2>/dev/null \
+                    | grep -o 'https://blog.dookinternational.com/images/posts/' | head -1 || true)
+            if [ -n \"\$host\" ]; then
+              echo '3/3 image URLs use the public HTTPS origin'
+            else
+              echo '3/3 WARNING: no public image URLs found in the API response.'
+              echo '    Either there are no posts with images, or the nginx Host map is not applying -'
+              echo '    in which case the page renders with broken images. Check manually before calling this done.'
+            fi
+          "
 
       - name: Summary
         if: always()
         run: |
           echo "### Blog deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "- image: \`${{ steps.img.outputs.ref }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- vm: \`$VM_NAME\` (\`$ZONE\`), port \`$HOST_PORT\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- vm: \`$VM_NAME\` (\`$ZONE\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- reachable at \`127.0.0.1:$BLOG_PORT\` inside \`$WEB_CONTAINER\`'s network namespace (not published)" >> "$GITHUB_STEP_SUMMARY"

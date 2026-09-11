@@ -205,8 +205,47 @@ COPY <<'NGINXCONF' /etc/nginx/sites-available/default
 # Laravel's TrustProxies middleware - not this file - that has to be taught
 # to trust them.
 
+# --- Public origin for image URLs, for /api/* requests only ---------------
+#
+# ApiBlogController returns ABSOLUTE image URLs built from the address the API
+# was called on:
+#
+#     $value->image = url('') . '/images/posts/' . $value->image;
+#
+# url() is request-based - it reads the Host header, not APP_URL. dookwebsite
+# calls this API at 127.0.0.1:8001 and drops the result straight into
+# <img src="{{$posts->image}}">, so without this the reader's BROWSER would
+# try to load every post image from its own machine at 127.0.0.1:8001.
+#
+# These maps make the API - and only the API - report the public blog origin,
+# which already serves exactly these files over HTTPS from the same database:
+#
+#     https://blog.dookinternational.com/images/posts/<file>  ->  200 image/jpeg
+#
+# HTTPS matters as much as the host: the page is served over https, so http://
+# image URLs would be blocked as mixed content even if the host were right.
+#
+# Scoped to /api/ deliberately. The CMS keeps its real host, so an editor
+# reaching the admin UI does not get form actions and redirects pointing at
+# the production domain - which would silently act against the live site.
+#
+# The honest fix is making that base URL a config value in the application
+# instead of deriving it from the request. This changes no PHP.
+map $request_uri $blog_public_host {
+    default   $http_host;
+    ~^/api/   blog.dookinternational.com;
+}
+map $request_uri $blog_public_https {
+    default   "";
+    ~^/api/   on;
+}
+
 server {
-    listen 80 default_server;
+    # 8001, not 80. This container shares dookwebsite's network namespace so
+    # that its hardcoded 127.0.0.1:8001 resolves here - which also means port
+    # 80 in that namespace already belongs to dookwebsite's nginx, and binding
+    # it would fail outright.
+    listen 8001 default_server;
     server_name _;
     root /var/www/html/public;
     index index.php;
@@ -269,6 +308,11 @@ server {
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        # Must come AFTER `include fastcgi_params`, which sets HTTP_HOST and
+        # HTTPS itself - these override those values, and only differ from
+        # them for /api/ requests (see the maps at the top of this file).
+        fastcgi_param HTTP_HOST $blog_public_host;
+        fastcgi_param HTTPS     $blog_public_https;
         # Image processing on a large upload is the slow path here.
         fastcgi_read_timeout 300;
     }
@@ -403,7 +447,7 @@ echo "[entrypoint] Ready. Starting: $*"
 exec "$@"
 ENTRYPOINT_SH
 
-EXPOSE 80
+EXPOSE 8001
 
 # Hits the login page - a closure returning a view - so this proves nginx,
 # php-fpm and a full Laravel boot all work WITHOUT touching the database.
@@ -411,7 +455,7 @@ EXPOSE 80
 # health check that failed whenever the tunnel dropped would have Docker
 # restart-loop a container that is doing nothing wrong.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -fsS -o /dev/null http://127.0.0.1/ || exit 1
+    CMD curl -fsS -o /dev/null http://127.0.0.1:8001/ || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
