@@ -42,7 +42,7 @@ class ApiBlogController extends Controller
         if(count($posts)>0){
             foreach ($posts as $key => $value) {
                 if($value->image != "" || $value->image != null){
-                    $value->image = url('').'/images/posts/'.$value->image;
+                    $value->image = img_url('images/posts/'.$value->image);
                 }
                 $value->published_date = date('M d, Y', strtotime($value->published_date));
 
@@ -69,7 +69,7 @@ class ApiBlogController extends Controller
         if(count($recentPost)>0){
             foreach ($recentPost as $key => $values) {
                 if($values->image != "" || $values->image != null){
-                    $values->image = url('').'/images/posts/'.$values->image;
+                    $values->image = img_url('images/posts/'.$values->image);
                 }
                 $values->published_date = date('M d, Y', strtotime($values->published_date));
             }
@@ -95,7 +95,7 @@ class ApiBlogController extends Controller
             ->first(); 
         if($post){
             if($post->image != "" || $post->image != null){
-                $post->image = url('').'/images/posts/'.$post->image;
+                $post->image = img_url('images/posts/'.$post->image);
             }
             $post->published_date = date('M d, Y', strtotime($post->published_date));
              $post->modified_date = date('M d, Y', strtotime($post->modified_date));
@@ -148,7 +148,7 @@ class ApiBlogController extends Controller
         if(count($recentPost)>0){
             foreach ($recentPost as $key => $values) {
                 if($values->image != "" || $values->image != null){
-                    $values->image = url('').'/images/posts/'.$values->image;
+                    $values->image = img_url('images/posts/'.$values->image);
                 }
                 $values->published_date = date('M d, Y', strtotime($values->published_date));
                 $values->modified_date = date('M d, Y', strtotime($values->modified_date));
@@ -179,7 +179,7 @@ class ApiBlogController extends Controller
         if(count($posts)>0){
             foreach ($posts as $key => $value) {
                 if($value->image != "" || $value->image != null){
-                    $value->image = url('').'/images/posts/'.$value->image;
+                    $value->image = img_url('images/posts/'.$value->image);
                 }
                 $value->published_date = date('M d, Y', strtotime($value->published_date));
 
@@ -204,7 +204,7 @@ class ApiBlogController extends Controller
         if(count($recentPost)>0){
             foreach ($recentPost as $key => $values) {
                 if($values->image != "" || $values->image != null){
-                    $values->image = url('').'/images/posts/'.$values->image;
+                    $values->image = img_url('images/posts/'.$values->image);
                 }
                 $values->published_date = date('M d, Y', strtotime($values->published_date));
             }
@@ -240,7 +240,7 @@ class ApiBlogController extends Controller
         if(count($posts)>0){
             foreach ($posts as $key => $value) {
                 if($value->image != "" || $value->image != null){
-                    $value->image = url('').'/images/posts/'.$value->image;
+                    $value->image = img_url('images/posts/'.$value->image);
                 }
                 $value->published_date = date('M d, Y', strtotime($value->published_date));
 
@@ -267,7 +267,7 @@ class ApiBlogController extends Controller
         if(count($recentPost)>0){
             foreach ($recentPost as $key => $values) {
                 if($values->image != "" || $values->image != null){
-                    $values->image = url('').'/images/posts/'.$values->image;
+                    $values->image = img_url('images/posts/'.$values->image);
                 }
                 $values->published_date = date('M d, Y', strtotime($values->published_date));
             }
@@ -296,7 +296,7 @@ class ApiBlogController extends Controller
         if($posts){
             foreach ($posts as $key => $post) {
                 if($post->image != "" || $post->image != null){
-                    $post->image = url('').'/images/posts/'.$post->image;
+                    $post->image = img_url('images/posts/'.$post->image);
                 }
                 $post->published_date = date('M d, Y', strtotime($post->published_date));
             }

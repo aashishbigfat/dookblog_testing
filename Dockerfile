@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# dookblog (blog.dookinternational.com) - Laravel 8 admin CMS, plus the JSON
+# dookblog - Laravel 8 admin CMS, plus the JSON
 # API that dookwebsite's BlogController fetches server-side.
 #
 # Built to run as a SECOND container on the same Compute Engine VM that
@@ -12,10 +12,9 @@
 #     and terminates Let's Encrypt TLS itself. This one serves plain HTTP on
 #     container port 80, to be published on another host port and fronted
 #     later. Wiring that up is a separate step - not done here.
-#   - The database is the same private-IP Cloud SQL host (192.168.4.7,
-#     database `dookblog`), reachable only through the VM's OpenVPN tunnel.
-#     That tunnel already exists for dookwebsite; this image needs nothing
-#     extra for it.
+#   - The database is Cloud SQL at 34.93.48.191, database `dookblog`,
+#     reached directly over the VM's normal egress. It used to be a private
+#     address behind an OpenVPN tunnel; that dependency is gone.
 #   - No Redis. This app is CACHE_DRIVER=file / SESSION_DRIVER=file /
 #     QUEUE_CONNECTION=sync, so it adds nothing to the Redis plan's 30-client
 #     budget that dookwebsite's php-fpm pool is sized against.
@@ -219,56 +218,15 @@ COPY <<'NGINXCONF' /etc/nginx/sites-available/default
 # Laravel's TrustProxies middleware - not this file - that has to be taught
 # to trust them.
 
-# --- Public origin for image URLs, for /api/* requests only ---------------
+# Image URLs are NOT built from the request any more. ApiBlogController used
+# to do url('') . '/images/posts/' . $file, which read the Host header, so a
+# call over loopback produced image URLs pointing at 127.0.0.1:8001. Two nginx
+# maps used to rewrite HTTP_HOST for /api/ requests to paper over that.
 #
-# ApiBlogController returns ABSOLUTE image URLs built from the address the API
-# was called on:
-#
-#     $value->image = url('') . '/images/posts/' . $value->image;
-#
-# url() is request-based - it reads the Host header, not APP_URL. dookwebsite
-# calls this API at 127.0.0.1:8001 and drops the result straight into
-# <img src="{{$posts->image}}">, so without this the reader's BROWSER would
-# try to load every post image from its own machine at 127.0.0.1:8001.
-#
-# These maps make the API - and only the API - report the site's own public
-# origin, so blog images are served from the same domain as the page that
-# embeds them:
-#
-#     https://dook.bigfat.ai/images/posts/<file>
-#
-# That path is not in dookwebsite's docroot; dookwebsite's nginx proxies
-# ^~ /images/posts/ to 127.0.0.1:8001, which reaches THIS container because
-# the two share a network namespace. Both halves must ship together - point
-# this at dook.bigfat.ai before that proxy exists and every featured image
-# 404s.
-#
-# This deliberately does NOT use the legacy blog host. It would work (that
-# host serves the same files from the same database), but it would leave this
-# deployment quietly depending on the old production server for its images.
-#
-# Images inside post BODIES are a separate matter and are not fixed by this:
-# summernoteImage() writes absolute URLs into the stored post HTML at upload
-# time, so they point at whichever host the CMS was on. Redirecting those
-# means rewriting content in the database.
-#
-# HTTPS matters as much as the host: the page is served over https, so http://
-# image URLs would be blocked as mixed content even if the host were right.
-#
-# Scoped to /api/ deliberately. The CMS keeps its real host, so an editor
-# reaching the admin UI does not get form actions and redirects pointing at
-# the production domain - which would silently act against the live site.
-#
-# The honest fix is making that base URL a config value in the application
-# instead of deriving it from the request. This changes no PHP.
-map $request_uri $blog_public_host {
-    default   $http_host;
-    ~^/api/   dook.bigfat.ai;
-}
-map $request_uri $blog_public_https {
-    default   "";
-    ~^/api/   on;
-}
+# config/images.php now holds the base URL and img_url() builds from it, so
+# every caller gets the same answer and the rewrite is gone. That is the fix
+# the removed comment here kept calling the honest one.
+
 
 server {
     # 8001, not 80. This container shares dookwebsite's network namespace so
@@ -341,11 +299,6 @@ server {
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        # Must come AFTER `include fastcgi_params`, which sets HTTP_HOST and
-        # HTTPS itself - these override those values, and only differ from
-        # them for /api/ requests (see the maps at the top of this file).
-        fastcgi_param HTTP_HOST $blog_public_host;
-        fastcgi_param HTTPS     $blog_public_https;
         # Image processing on a large upload is the slow path here.
         fastcgi_read_timeout 300;
     }

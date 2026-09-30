@@ -256,7 +256,7 @@ jobs:
             #    this check is how you ship a page where every image is broken
             #    and mistake it for a styling problem.
             host=\$(sudo docker exec $WEB_CONTAINER curl -fsS --max-time 20 http://127.0.0.1:$BLOG_PORT/api/all-posts 2>/dev/null \
-                    | grep -o 'https://blog.dookinternational.com/images/posts/' | head -1 || true)
+                    | grep -o 'https://img.dook.bigfat.ai/images/posts/' | head -1 || true)
             if [ -n \"\$host\" ]; then
               echo '3/3 image URLs use the public HTTPS origin'
             else

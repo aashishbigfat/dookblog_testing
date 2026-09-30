@@ -3,7 +3,7 @@
     $users = DB::table('users')->where('tenant_id',auth()->user()->tenant_id)
         ->whereNotNull('logo')->first();
     if(isset($users->logo) != null || isset($users->logo) != ""){
-        $user = url('images/profile').'/'.$users->logo;
+        $user = img_url('images/profile/'.$users->logo);
     }else{
         $user = url('assets/images/logo.png');
     }

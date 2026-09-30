@@ -59,7 +59,7 @@
               </div>
               <div class="choosebannerShow" id="post_uploaded_image">
                 @if($user->logo)
-                  <img src="{{asset('/images/profile')}}/{{$user->logo}}" id="filePath" alt="your image" class="img_url" onclick="triggerImage()">
+                  <img src="{{ img_url('images/profile/'.$user->logo) }}" id="filePath" alt="your image" class="img_url" onclick="triggerImage()">
                 @else
                   <img src="{{asset('/images/no-img.jpg')}}" id="filePath" alt="your image" class="img_url" onclick="triggerImage()">
                 @endif

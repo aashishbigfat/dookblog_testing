@@ -58,7 +58,7 @@
                 @foreach($posts as $key => $row)
                 <tr>
                     <td>{{ ($posts->currentpage()-1) * $posts->perpage() + $key + 1 }}</td>
-                    <td><img style="width: 100%" src="{{asset('images/posts/')}}/{{$row->image}}"></td>
+                    <td><img style="width: 100%" src="{{ img_url('images/posts/'.$row->image) }}"></td>
                     <td>{{$row->title}}</td>
                     <td>{{date('d M, Y', strtotime($row->published_date))}}</td>
                     <td>{{$row->word_count}}</td>

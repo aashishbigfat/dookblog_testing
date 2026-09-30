@@ -79,7 +79,6 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('/my-post', [PostController::class, 'myPost'])->name('my_post');
 
     //Get destinations
-    Route::get('/dook-destinations-pull', [DestinationController::class, 'getDestintionFromDook'])->name('dook_destinations_pull');
     Route::get('/destinations', [DestinationController::class, 'destintions'])->name('dook_destinations');
     Route::post('/destination_assign/{id}/{writer_id}', [DestinationController::class, 'destintionAssign'])->name('destination_assign');
 
@@ -103,5 +102,4 @@ Route::group(['middleware' => 'auth'], function () {
     Route::get('/company-profile', [ProfileController::class, 'companyProfile'])->name('company_profile');
     Route::post('/company-profile/store', [ProfileController::class, 'companyProfileStore'])->name('company_profile_store');
 
-    Route::get('get_post',[TopicController::class,'getBlogWP']);
 });

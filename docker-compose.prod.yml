@@ -74,7 +74,7 @@ services:
     #     network namespace is shared. The blog is reachable only from inside
     #     that namespace, which is precisely the access dookwebsite needs and
     #     no more. Editors keep using the existing CMS at
-    #     blog.dookinternational.com.
+    #     the legacy CMS host.
     #   - This container's lifecycle is now coupled to dookwebsite's. When
     #     dookwebsite is redeployed its container is REPLACED, and this one's
     #     namespace disappears with it; Docker then fails to start this

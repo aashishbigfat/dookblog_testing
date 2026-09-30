@@ -17,35 +17,6 @@ use App\Traits\FireBaseNotification;
 class DestinationController extends Controller
 {
     use FireBaseNotification;
-    public function getDestintionFromDook(){
-        $post = array(
-            'dest' => "abcd"
-        );
-
-        $curl = curl_init();
-        curl_setopt($curl, CURLOPT_URL, 'https://adm.dookinternational.com/api/blog_destinations');
-        curl_setopt($curl, CURLOPT_TIMEOUT, 30);
-        curl_setopt($curl, CURLOPT_POST, 1);
-        curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($curl, CURLOPT_POSTFIELDS, $post);
-        $response = curl_exec($curl);
-        $vv = json_decode($response);
-        $destinations = $vv->destinations;
-        foreach ($destinations as $key => $value) {
-            $uniqueDest = Destination::where('reference_id', $value->id)->first();
-            if($uniqueDest){
-
-            }else{
-                $destination = new Destination;
-                $destination->reference_id = $value->id;
-                $destination->dest_name = $value->dest_name;
-                $destination->country_name = $value->country_name;
-                $destination->save();
-            }
-        }
-        return response()->json(['msg'=>'success']);
-    }
-
     public function destintions(Request $request)
     {
         $status = $request->status_filter;

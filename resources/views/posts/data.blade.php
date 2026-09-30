@@ -17,7 +17,7 @@
         @foreach($posts as $key => $row)
         <tr>
             <td>{{ ($posts->currentpage()-1) * $posts->perpage() + $key + 1 }}</td>
-            <td><img style="width: 100%" src="{{asset('images/posts/')}}/{{$row->image}}"></td>
+            <td><img style="width: 100%" src="{{ img_url('images/posts/'.$row->image) }}"></td>
             <td>{{$row->title}}</td>
             <td>{{date('d M, Y', strtotime($row->published_date))}}</td>
             <td>
@@ -36,7 +36,7 @@
                 @can('post_edit', $permission)
                     <a class="editPost" href="{{route('edit_post',$row->id)}}">
                         <i class="fa fa-edit"></i>
-                    </a> | <a class="ViewPost" target="_blank" href="https://www.dookinternational.com/blog/{{$row->slug}}">
+                    </a> | <a class="ViewPost" target="_blank" href="https://dook.bigfat.ai/blog/{{$row->slug}}">
                         <i class="fa fa-eye"></i>
                     </a> | <form id="delete-form-{{ $row->id }}" method="post" action="{{route('post_status_change',$row->id)}}" style="display: none;">
                         @csrf

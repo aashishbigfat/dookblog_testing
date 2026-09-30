@@ -73,7 +73,7 @@
                   </div>
                   <div class="choosebannerShow" id="post_uploaded_image">
                     @if($post->image)
-                      <img src="{{asset('/images/posts')}}/{{$post->image}}" id="filePath" alt="your image" class="img_url">
+                      <img src="{{ img_url('images/posts/'.$post->image) }}" id="filePath" alt="your image" class="img_url">
                     @else
                       <img src="{{asset('/images/no-img.jpg')}}" id="filePath" alt="your image" class="img_url">
                     @endif

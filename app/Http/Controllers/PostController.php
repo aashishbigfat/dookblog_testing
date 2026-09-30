@@ -34,7 +34,7 @@ class PostController extends Controller
         Image::make($data)->save( public_path($relPath . $imageName ) );
         //file_put_contents($imageName, $data);
         $urls = public_path("images/cropedimages/".$imageName);
-        $url = url("images/cropedimages/".$imageName);
+        $url = img_url("images/cropedimages/".$imageName);
         //echo '<img src="'.$url.'" class="img-thumbnail" />';
         return response()->json(['img' => $url, 'url' => $urls]);
     }
@@ -48,7 +48,7 @@ class PostController extends Controller
                 mkdir(public_path($relPath), 777, true);
             }
         $img = Image::make($image)->save( public_path($relPath . $imageName) );
-        $url = url('images/post-media').'/'.$imageName;
+        $url = img_url('images/post-media/'.$imageName);
         //dd($url);
         return response()->json($url);
     }

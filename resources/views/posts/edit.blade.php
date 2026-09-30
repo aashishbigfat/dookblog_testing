@@ -22,7 +22,7 @@
             <input type="text" class="form-control" name="slug" id="slug" placeholder="Enter slug" value="{{$post->slug}}" autocomplete="off">
           </div>
           <div class="col-md-12 mt-3">
-            <label for="title" class="form-label">Page Url: <span id="pageUrl"><a href="https://www.dookinternational.com/blog/{{$post->slug}}/">https://www.dookinternational.com/blog/{{$post->slug}}/</a></span></label>
+            <label for="title" class="form-label">Page Url: <span id="pageUrl"><a href="https://dook.bigfat.ai/blog/{{$post->slug}}/">https://dook.bigfat.ai/blog/{{$post->slug}}/</a></span></label>
             
           </div>
           <div class="col-md-12 mt-3">
@@ -135,7 +135,7 @@
                   </div>
                   <div class="choosebannerShow" id="post_uploaded_image">
                     @if($post->image)
-                      <img src="{{asset('/images/posts')}}/{{$post->image}}" id="filePath" alt="your image" class="img_url">
+                      <img src="{{ img_url('images/posts/'.$post->image) }}" id="filePath" alt="your image" class="img_url">
                     @else
                       <img src="{{asset('/images/no-img.jpg')}}" id="filePath" alt="your image" class="img_url">
                     @endif
