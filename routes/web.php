@@ -28,7 +28,14 @@ Route::get('/', function () {
 
 Route::get('/search-country-ajax', [PostController::class, 'searchCountry'])->name('country_search');
 
-Auth::routes();
+// 'register' => false because this CMS is now reachable from the internet at
+// blog.dook.bigfat.ai. Auth::routes() with no arguments publishes /register,
+// which would let anyone create an account here. Editors are created through
+// /users in the panel (RollUserController), not by self-signup - the users
+// table holds a handful of rows, none of them from a public form.
+//
+// Pass no arguments again to put the public signup form back.
+Auth::routes(['register' => false]);
 Route::group(['middleware' => 'auth'], function () {
     //Route::get('/moveImage', [TopicController::class, 'moveimageOneTwoAnother']);
     Route::get('/dashboard', [HomeController::class, 'index'])->name('dashboard');
